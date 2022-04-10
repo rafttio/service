@@ -58,7 +58,36 @@ func (s *selfDaemonizedLinuxService) lockFilePath() string {
 	return path
 }
 
-func (s *selfDaemonizedLinuxService) Run() error { return nil } // TODO simply run the service
+func (s *selfDaemonizedLinuxService) Run() error {
+	envVarStrings := envVarMapToStringArray(s.EnvVars)
+	envVarStrings = append(envVarStrings, os.Environ()...)
+
+	executablePath, err := s.execPath()
+	if err != nil {
+		return err
+	}
+
+	args := []string{executablePath}
+	args = append(args, s.Arguments...)
+
+	lockFilePath := s.lockFilePath()
+
+	// IMPORTANT: do not close this file, since it will release the flock
+	fd, err := syscall.Open(lockFilePath, syscall.O_WRONLY|syscall.O_CREAT, 0644)
+	if err != nil {
+		return err
+	}
+
+	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return errors.New("service already running")
+	}
+
+	if err = syscall.Exec(executablePath, args, envVarStrings); err != nil {
+		return err
+	}
+
+	return nil
+}
 
 func (s *selfDaemonizedLinuxService) Start() error {
 	envVarStrings := envVarMapToStringArray(s.EnvVars)
