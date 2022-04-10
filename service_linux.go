@@ -63,14 +63,25 @@ func init() {
 			new: newOpenRCService,
 		},
 		linuxSystemService{
-			name:   "unix-systemv",
+			name:   "linux-self-daemonized",
 			detect: func() bool { return true },
 			interactive: func() bool {
 				is, _ := isInteractive()
 				return is
 			},
-			new: newSystemVService,
+			new: newSelfDaemonizedLinuxService,
 		},
+		// Not all linux-based systems have System V, therefore we want to daemonize the service process without
+		// depending on any external system
+		//linuxSystemService{
+		//	name:   "unix-systemv",
+		//	detect: func() bool { return true },
+		//	interactive: func() bool {
+		//		is, _ := isInteractive()
+		//		return is
+		//	},
+		//	new: newSystemVService,
+		//},
 	)
 }
 
