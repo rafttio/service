@@ -148,15 +148,18 @@ func (s *selfDaemonizedLinuxService) Start() error {
 func (s *selfDaemonizedLinuxService) Stop() error {
 	lockFilePath := s.lockFilePath()
 
-	fd, err := syscall.Open(lockFilePath, syscall.O_RDWR|syscall.O_CREAT, 0644)
+	fd, err := syscall.Open(lockFilePath, syscall.O_RDWR, 0644)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // Lock file does not exist - service is not running
+		}
 		return err
 	}
 
 	// Expecting the flock to fail, since the service should be running and locking the file.
 	// If the flock does not fail, it means that the service is not running.
 	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
-		return errors.New("service is not running")
+		return nil // Service is not running
 	}
 
 	f := os.NewFile(uintptr(fd), lockFilePath)
@@ -167,7 +170,7 @@ func (s *selfDaemonizedLinuxService) Stop() error {
 
 	pidString := string(data)
 	if pidString == "" {
-		return errors.New("could not find service pid, service is probably not running")
+		return nil // Service is probably not running
 	}
 
 	pid, err := strconv.Atoi(pidString)
@@ -208,13 +211,27 @@ func (s *selfDaemonizedLinuxService) Restart() error {
 }
 
 func (s *selfDaemonizedLinuxService) Install() error {
-	// TODO create pidfile
-	return nil
+	lockFilePath := s.lockFilePath()
+
+	if _, err := os.Stat(lockFilePath); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("service already installed")
+	}
+
+	f, err := os.Create(lockFilePath)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 func (s *selfDaemonizedLinuxService) Uninstall() error {
-	// TODO remove pidfile
-	return nil
+	lockFilePath := s.lockFilePath()
+
+	if _, err := os.Stat(lockFilePath); errors.Is(err, os.ErrNotExist) {
+		return errors.New("service not installed")
+	}
+
+	return os.Remove(lockFilePath)
 }
 
 func (s *selfDaemonizedLinuxService) Logger(errs chan<- error) (Logger, error) {
