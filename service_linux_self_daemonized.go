@@ -10,9 +10,11 @@ import (
 	"os"
 	"strconv"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
-const SIGTERM = syscall.Signal(15)
+const DUMMY_SIGNAL = syscall.Signal(0)
 
 type selfDaemonizedLinuxService struct {
 	i        Interface
@@ -178,12 +180,13 @@ func (s *selfDaemonizedLinuxService) Stop() error {
 		return err
 	}
 
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return errors.New("could not find service process, service is probably not running")
+	// For linux, os.FindProcess always return a process
+	process, _ := os.FindProcess(pid)
+	if err := process.Signal(DUMMY_SIGNAL); err != nil {
+		return nil // Could not find service process, service is probably not running
 	}
 
-	if err := process.Signal(SIGTERM); err != nil {
+	if err := process.Signal(unix.SIGTERM); err != nil {
 		return err
 	}
 
@@ -256,4 +259,43 @@ func (s *selfDaemonizedLinuxService) Platform() string {
 	return s.platform
 }
 
-func (s *selfDaemonizedLinuxService) Status() (Status, error) { return 0, nil } // TODO check running processes and pidfile
+func (s *selfDaemonizedLinuxService) Status() (Status, error) {
+	lockFilePath := s.lockFilePath()
+	fd, err := syscall.Open(lockFilePath, syscall.O_RDONLY, 0644)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return StatusStopped, nil
+		}
+		return StatusUnknown, err
+	}
+
+	// Expecting the flock to fail, since the service should be running and locking the file.
+	// If the flock does not fail, it means that the service is not running.
+	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+		return StatusStopped, nil
+	}
+
+	f := os.NewFile(uintptr(fd), lockFilePath)
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return StatusUnknown, err
+	}
+
+	pidString := string(data)
+	if pidString == "" {
+		return StatusStopped, nil // Service is probably not running
+	}
+
+	pid, err := strconv.Atoi(pidString)
+	if err != nil {
+		return StatusUnknown, err
+	}
+
+	// For linux, os.FindProcess always return a process
+	process, _ := os.FindProcess(pid)
+	if err := process.Signal(DUMMY_SIGNAL); err != nil {
+		return StatusStopped, nil
+	}
+
+	return StatusRunning, nil
+}
