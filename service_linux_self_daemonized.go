@@ -41,10 +41,10 @@ func envVarMapToStringArray(envVarMap map[string]string) []string {
 	return envStrings
 }
 
-func closeStandardPipes() error {
-	pipes := []int{syscall.Stdin, syscall.Stdout, syscall.Stderr}
-	for _, pipe := range pipes {
-		if err := syscall.Close(pipe); err != nil {
+func closeStandardFds() error {
+	fds := []int{syscall.Stdin, syscall.Stdout, syscall.Stderr}
+	for _, fd := range fds {
+		if err := syscall.Close(fd); err != nil {
 			return err
 		}
 	}
@@ -81,7 +81,11 @@ func (s *selfDaemonizedLinuxService) Run() error {
 	}
 
 	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return errors.New("service already running")
+		if err.(syscall.Errno) == syscall.EWOULDBLOCK {
+			return errors.New("service already running")
+		}
+
+		return err
 	}
 
 	if err = syscall.Exec(executablePath, args, envVarStrings); err != nil {
@@ -112,7 +116,11 @@ func (s *selfDaemonizedLinuxService) Start() error {
 	}
 
 	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return errors.New("service already running")
+		if err.(syscall.Errno) == syscall.EWOULDBLOCK {
+			return errors.New("service already running")
+		}
+
+		return err
 	}
 
 	ret, _, fdErr := syscall.Syscall(syscall.SYS_FORK, 0, 0, 0)
@@ -135,12 +143,12 @@ func (s *selfDaemonizedLinuxService) Start() error {
 			return err
 		}
 
-		if err = closeStandardPipes(); err != nil {
+		if err = closeStandardFds(); err != nil {
 			return err
 		}
 
 		if err = syscall.Exec(executablePath, args, envVarStrings); err != nil {
-			return err
+			os.Exit(2)
 		}
 	}
 
@@ -187,11 +195,19 @@ func (s *selfDaemonizedLinuxService) Stop() error {
 	}
 
 	if err := process.Signal(unix.SIGTERM); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			return nil // Could not find service process, service is probably not running
+		}
+
 		return err
 	}
 
 	if err := syscall.Flock(fd, syscall.LOCK_EX); err != nil {
-		return errors.New("service is running, could not update lock file")
+		if err.(syscall.Errno) == syscall.EWOULDBLOCK {
+			return errors.New("service is running, could not update lock file")
+		}
+
+		return err
 	}
 
 	if err := f.Truncate(0); err != nil {
@@ -271,8 +287,14 @@ func (s *selfDaemonizedLinuxService) Status() (Status, error) {
 
 	// Expecting the flock to fail, since the service should be running and locking the file.
 	// If the flock does not fail, it means that the service is not running.
-	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+	err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB)
+
+	if err == nil {
 		return StatusStopped, nil
+	}
+
+	if err.(syscall.Errno) != syscall.EWOULDBLOCK {
+		return StatusUnknown, err
 	}
 
 	f := os.NewFile(uintptr(fd), lockFilePath)
@@ -294,7 +316,11 @@ func (s *selfDaemonizedLinuxService) Status() (Status, error) {
 	// For linux, os.FindProcess always return a process
 	process, _ := os.FindProcess(pid)
 	if err := process.Signal(DUMMY_SIGNAL); err != nil {
-		return StatusStopped, nil
+		if errors.Is(err, os.ErrProcessDone) {
+			return StatusStopped, nil
+		}
+
+		return StatusUnknown, err
 	}
 
 	return StatusRunning, nil
