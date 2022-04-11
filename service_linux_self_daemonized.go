@@ -60,17 +60,25 @@ func (s *selfDaemonizedLinuxService) lockFilePath() string {
 	return path
 }
 
-func (s *selfDaemonizedLinuxService) Run() error {
-	envVarStrings := envVarMapToStringArray(s.EnvVars)
+func (s *selfDaemonizedLinuxService) prepareExecInputs() (executablePath string, args []string, envVarStrings []string, err error) {
+	executablePath, err = s.execPath()
+	if err != nil {
+		return
+	}
+
+	args = []string{executablePath}
+	args = append(args, s.Arguments...)
+
+	envVarStrings = envVarMapToStringArray(s.EnvVars)
 	envVarStrings = append(envVarStrings, os.Environ()...)
 
-	executablePath, err := s.execPath()
+	return
+}
+func (s *selfDaemonizedLinuxService) Run() error {
+	executablePath, args, envVarStrings, err := s.prepareExecInputs()
 	if err != nil {
 		return err
 	}
-
-	args := []string{executablePath}
-	args = append(args, s.Arguments...)
 
 	lockFilePath := s.lockFilePath()
 
@@ -96,16 +104,10 @@ func (s *selfDaemonizedLinuxService) Run() error {
 }
 
 func (s *selfDaemonizedLinuxService) Start() error {
-	envVarStrings := envVarMapToStringArray(s.EnvVars)
-	envVarStrings = append(envVarStrings, os.Environ()...)
-
-	executablePath, err := s.execPath()
+	executablePath, args, envVarStrings, err := s.prepareExecInputs()
 	if err != nil {
 		return err
 	}
-
-	args := []string{executablePath}
-	args = append(args, s.Arguments...)
 
 	lockFilePath := s.lockFilePath()
 
