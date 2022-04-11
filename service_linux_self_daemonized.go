@@ -167,6 +167,7 @@ func (s *selfDaemonizedLinuxService) Stop() error {
 		}
 		return err
 	}
+	defer syscall.Close(fd)
 
 	// Expecting the flock to fail, since the service should be running and locking the file.
 	// If the flock does not fail, it means that the service is not running.
