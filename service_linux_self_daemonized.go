@@ -85,6 +85,25 @@ func (s *selfDaemonizedLinuxService) prepareExecInputs() (executablePath string,
 
 	return
 }
+
+func (s *selfDaemonizedLinuxService) lockForServiceOperations() (fd int, err error) {
+	otherLockFile := "/tmp/lalala.lock" // TODO rename this
+	fd, err = syscall.Open(otherLockFile, syscall.O_WRONLY|syscall.O_CREAT, 0644)
+	if err != nil {
+		return -1, err
+	}
+
+	if err := syscall.Flock(fd, syscall.LOCK_EX); err != nil {
+		return -1, err
+	}
+
+	return fd, nil
+}
+
+func (s *selfDaemonizedLinuxService) unlockForServiceOperations(fd int) error {
+	return syscall.Close(fd)
+}
+
 func (s *selfDaemonizedLinuxService) Run() error {
 	executablePath, args, envVarStrings, err := s.prepareExecInputs()
 	if err != nil {
@@ -115,6 +134,11 @@ func (s *selfDaemonizedLinuxService) Run() error {
 }
 
 func (s *selfDaemonizedLinuxService) Start() error {
+	serviceOperationsLockFd, err := s.lockForServiceOperations()
+	if err != nil {
+		return err
+	}
+
 	executablePath, args, envVarStrings, err := s.prepareExecInputs()
 	if err != nil {
 		return err
@@ -144,31 +168,47 @@ func (s *selfDaemonizedLinuxService) Start() error {
 	if ret == 0 {
 		// Running in child process. Calling setsid is required for the daemon to be an independent process.
 		if err, _ := syscall.Setsid(); err < 0 {
-			return fmt.Errorf("setsid error: %d", err)
+			os.Exit(2)
 		}
 
 		// IMPORTANT: do not close this file, since it will release the flock
 		f := os.NewFile(uintptr(fd), lockFilePath)
 		if err := f.Truncate(0); err != nil {
-			return err
+			os.Exit(2)
 		}
 		if _, err := f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
-			return err
+			os.Exit(2)
+		}
+
+		if err := s.unlockForServiceOperations(serviceOperationsLockFd); err != nil {
+			os.Exit(2)
 		}
 
 		if err = redirectStandardFdsToDevNull(); err != nil {
-			return err
+			os.Exit(2)
 		}
 
 		if err = syscall.Exec(executablePath, args, envVarStrings); err != nil {
 			os.Exit(2)
 		}
+	} else {
+		defer s.unlockForServiceOperations(serviceOperationsLockFd)
+
+		// Closing the lockfile FD here so that it will only stay open in the child process from now on, to avoid
+		// holding the lock more than necessary
+		defer syscall.Close(fd)
 	}
 
 	return nil
 }
 
 func (s *selfDaemonizedLinuxService) Stop() error {
+	serviceOperationsLockFd, err := s.lockForServiceOperations()
+	if err != nil {
+		return err
+	}
+	defer s.unlockForServiceOperations(serviceOperationsLockFd)
+
 	lockFilePath := s.lockFilePath()
 
 	fd, err := syscall.Open(lockFilePath, syscall.O_RDWR, 0644)
@@ -290,6 +330,12 @@ func (s *selfDaemonizedLinuxService) Platform() string {
 }
 
 func (s *selfDaemonizedLinuxService) Status() (Status, error) {
+	serviceOperationsLockFd, err := s.lockForServiceOperations()
+	if err != nil {
+		return StatusUnknown, err
+	}
+	defer s.unlockForServiceOperations(serviceOperationsLockFd)
+
 	lockFilePath := s.lockFilePath()
 	fd, err := syscall.Open(lockFilePath, syscall.O_RDONLY, 0644)
 	if err != nil {
