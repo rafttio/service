@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -55,7 +56,12 @@ func closeStandardFds() error {
 func (s *selfDaemonizedLinuxService) lockFilePath() string {
 	path := s.Option.string(optionLockFile, "")
 	if path == "" {
-		path = fmt.Sprintf("/tmp/%s-service.lock", s.Name)
+		dirname, err := os.UserHomeDir()
+		if err != nil {
+			dirname = "/tmp"
+		}
+		filename := fmt.Sprintf("%s-service.lock", s.Name)
+		path = filepath.Join(dirname, filename)
 	}
 	return path
 }

@@ -190,7 +190,7 @@ func New(i Interface, c *Config) (Service, error) {
 //    - SuccessExitStatus string ()             - The list of exit status that shall be considered as successful,
 //                                                in addition to the default ones.
 //    - LogDirectory string(/var/log)           - The path to the log files directory
-//    - LockFile     string (/tmp/{Name}-service.lock) - The path to the lock file
+//    - LockFile     string (~/{Name}-service.lock, fallback to /tmp/{Name}-service.lock) - The path to the lock file
 //
 //  * Linux (systemd)
 //    - LimitNOFILE   int    (-1)               - Maximum open files (ulimit -n)
