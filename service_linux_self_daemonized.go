@@ -42,10 +42,15 @@ func envVarMapToStringArray(envVarMap map[string]string) []string {
 	return envStrings
 }
 
-func closeStandardFds() error {
+func redirectStandardFdsToDevNull() error {
+	devNull, err := syscall.Open(os.DevNull, syscall.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+
 	fds := []int{syscall.Stdin, syscall.Stdout, syscall.Stderr}
 	for _, fd := range fds {
-		if err := syscall.Close(fd); err != nil {
+		if err := syscall.Dup2(devNull, fd); err != nil {
 			return err
 		}
 	}
@@ -151,7 +156,7 @@ func (s *selfDaemonizedLinuxService) Start() error {
 			return err
 		}
 
-		if err = closeStandardFds(); err != nil {
+		if err = redirectStandardFdsToDevNull(); err != nil {
 			return err
 		}
 
