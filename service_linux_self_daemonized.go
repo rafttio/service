@@ -71,6 +71,19 @@ func (s *selfDaemonizedLinuxService) lockFilePath() string {
 	return path
 }
 
+func (s *selfDaemonizedLinuxService) pidFilePath() string {
+	path := s.Option.string(optionPIDFile, "")
+	if path == "" {
+		dirname, err := os.UserHomeDir()
+		if err != nil {
+			dirname = "/tmp"
+		}
+		filename := fmt.Sprintf("%s-service.pid", s.Name)
+		path = filepath.Join(dirname, filename)
+	}
+	return path
+}
+
 func (s *selfDaemonizedLinuxService) prepareExecInputs() (executablePath string, args []string, envVarStrings []string, err error) {
 	executablePath, err = s.execPath()
 	if err != nil {
@@ -87,8 +100,9 @@ func (s *selfDaemonizedLinuxService) prepareExecInputs() (executablePath string,
 }
 
 func (s *selfDaemonizedLinuxService) lockForServiceOperations() (fd int, err error) {
-	otherLockFile := "/tmp/lalala.lock" // TODO rename this
-	fd, err = syscall.Open(otherLockFile, syscall.O_WRONLY|syscall.O_CREAT, 0644)
+	pidFilePath := s.pidFilePath()
+
+	fd, err = syscall.Open(pidFilePath, syscall.O_WRONLY|syscall.O_CREAT, 0644)
 	if err != nil {
 		return -1, err
 	}
@@ -245,7 +259,7 @@ func (s *selfDaemonizedLinuxService) Stop() error {
 		return err
 	}
 
-	// For linux, os.FindProcess always return a process
+	// For linux, os.FindProcess always returns a process, so it's the only way to find out if a process is running
 	process, _ := os.FindProcess(pid)
 	if err := process.Signal(DUMMY_SIGNAL); err != nil {
 		return nil // Could not find service process, service is probably not running
@@ -303,8 +317,12 @@ func (s *selfDaemonizedLinuxService) Install() error {
 func (s *selfDaemonizedLinuxService) Uninstall() error {
 	lockFilePath := s.lockFilePath()
 
-	if _, err := os.Stat(lockFilePath); errors.Is(err, os.ErrNotExist) {
-		return errors.New("service not installed")
+	if _, err := os.Stat(lockFilePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("service not installed")
+		}
+
+		return err
 	}
 
 	return os.Remove(lockFilePath)
@@ -347,6 +365,7 @@ func (s *selfDaemonizedLinuxService) Status() (Status, error) {
 		}
 		return StatusUnknown, err
 	}
+	defer syscall.Close(fd)
 
 	// Expecting the flock to fail, since the service should be running and locking the file.
 	// If the flock does not fail, it means that the service is not running.
@@ -376,7 +395,7 @@ func (s *selfDaemonizedLinuxService) Status() (Status, error) {
 		return StatusUnknown, err
 	}
 
-	// For linux, os.FindProcess always return a process
+	// For linux, os.FindProcess always returns a process, so it's the only way to find out if a process is running
 	process, _ := os.FindProcess(pid)
 	if err := process.Signal(DUMMY_SIGNAL); err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
