@@ -179,6 +179,9 @@ func (s *selfDaemonizedLinuxService) Start() error {
 		if _, err := f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
 			os.Exit(2)
 		}
+		if err := f.Sync(); err != nil {
+			os.Exit(2)
+		}
 
 		if err := s.unlockForServiceOperations(serviceOperationsLockFd); err != nil {
 			os.Exit(2)
